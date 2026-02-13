@@ -1,0 +1,144 @@
+name: Build and publish
+run-name: "Build and publish ${{ github.ref_name }}"
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      patch:
+        description: "Patch release — leave empty to release the current version as-is, or enter a change description to bump patch"
+        required: false
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Determine version and tag
+        id: tag
+        run: |
+          CURRENT=$(grep '^version:' config.yaml | sed 's/version: *"\(.*\)"/\1/')
+          PATCH_DESC="${{ inputs.patch }}"
+
+          if [ -n "$PATCH_DESC" ]; then
+            MAJOR=${CURRENT%%.*}
+            PATCH=${CURRENT##*.}
+            NEW_VERSION="${MAJOR}.$((PATCH + 1))"
+            DATE=$(date -u +%Y-%m-%d)
+
+            sed -i "s/^version: .*/version: \"${NEW_VERSION}\"/" config.yaml
+            sed -i "/^All notable changes/a\\\\n## [${NEW_VERSION}] - ${DATE}\\n\\n### Changed\\n- ${PATCH_DESC}" CHANGELOG.md
+
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add config.yaml CHANGELOG.md
+            git commit -m "Release ${NEW_VERSION}"
+          else
+            NEW_VERSION="$CURRENT"
+          fi
+
+          TAG="v${NEW_VERSION}"
+          git tag "$TAG"
+          git push origin main --tags
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  validate:
+    needs: prepare
+    if: always() && (needs.prepare.result == 'success' || needs.prepare.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Check changelog has entry for this version
+        run: |
+          TAG="${{ needs.prepare.outputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          NOTES=$(awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{if(found) exit} found{print}" CHANGELOG.md)
+
+          if [ -z "$(echo "$NOTES" | tr -d '[:space:]')" ]; then
+            echo "::error::No changelog entry found for version ${VERSION}"
+            echo "Add an entry to CHANGELOG.md before releasing:"
+            echo "  ## [${VERSION}] - $(date -u +%Y-%m-%d)"
+            echo "  ### Changed"
+            echo "  - Your changes here"
+            exit 1
+          fi
+
+          echo "Changelog entry for ${VERSION}:"
+          echo "$NOTES"
+
+  build:
+    needs: [prepare, validate]
+    if: always() && needs.validate.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        arch: [amd64, aarch64]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: home-assistant/builder@2026.02.1
+        with:
+          args: |
+            --${{ matrix.arch }} \
+            --target /data \
+            --docker-hub ghcr.io/prmx
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    needs: [prepare, build]
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Extract changelog and create release
+        run: |
+          TAG="${{ needs.prepare.outputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          NOTES=$(awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{if(found) exit} found{print}" CHANGELOG.md)
+
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "$NOTES" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

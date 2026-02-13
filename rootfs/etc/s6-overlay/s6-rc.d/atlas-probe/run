@@ -1,0 +1,185 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+set -e
+
+LOG_LEVEL=$(bashio::config 'log_level')
+bashio::log.level "${LOG_LEVEL}"
+bashio::log.info "Starting RIPE Atlas Probe add-on..."
+
+# ---- Diagnostics ----
+bashio::log.debug "PID 1 is: $(ps -p 1 -o comm=)"
+bashio::log.debug "Current user: $(id)"
+bashio::log.debug "State of /etc/ripe-atlas: $(ls -ld /etc/ripe-atlas 2>&1 || echo 'MISSING')"
+bashio::log.debug "State of /var/spool/ripe-atlas: $(ls -ld /var/spool/ripe-atlas 2>&1 || echo 'MISSING')"
+bashio::log.debug "State of /data/ripe-atlas: $(ls -ld /data/ripe-atlas 2>&1 || echo 'MISSING')"
+bashio::log.debug "/etc/passwd entries: $(grep ripe /etc/passwd 2>&1 || echo 'NONE')"
+bashio::log.debug "/etc/group entries: $(grep ripe /etc/group 2>&1 || echo 'NONE')"
+
+# ---- Ensure probe users exist ----
+# Users are created at build time but may be missing at runtime
+# (HA supervisor can override /etc/passwd). Write entries directly
+# to avoid needing groupadd/useradd which may also be blocked.
+if ! id -u ripe-atlas &>/dev/null; then
+    bashio::log.warning "Probe users missing — creating at runtime..."
+    if ! grep -q '^ripe-atlas:' /etc/group 2>/dev/null; then
+        echo 'ripe-atlas:x:999:' >> /etc/group
+    fi
+    if ! grep -q '^ripe-atlas:' /etc/passwd 2>/dev/null; then
+        echo 'ripe-atlas:x:101:999:RIPE Atlas:/run/ripe-atlas:/usr/sbin/nologin' >> /etc/passwd
+    fi
+    if ! grep -q '^ripe-atlas-measurement:' /etc/passwd 2>/dev/null; then
+        echo 'ripe-atlas-measurement:x:102:999:RIPE Atlas Measurements:/var/spool/ripe-atlas:/usr/sbin/nologin' >> /etc/passwd
+    fi
+fi
+
+# ---- Persistence ----
+# /data/ survives container restarts and add-on updates.
+# Dirs are removed at build time; we symlink them to /data/ so all
+# writes go directly to persistent storage (no data loss on crash).
+
+# Key backup location — /config/ survives uninstall+reinstall
+KEY_BACKUP=/config/.ripe-atlas
+
+# First run: initialize /data/ from factory defaults
+if [ ! -d /data/ripe-atlas/etc ]; then
+    bashio::log.info "First run detected — initializing persistent storage..."
+    mkdir -p /data/ripe-atlas/etc
+    cp -rp /usr/share/factory/etc/ripe-atlas/. /data/ripe-atlas/etc/
+    bashio::log.debug "Copied factory etc defaults to /data/ripe-atlas/etc"
+
+    # Restore keys from backup if available (reinstall scenario)
+    if [ -f "${KEY_BACKUP}/probe_key" ]; then
+        bashio::log.info "Restoring probe keys from backup..."
+        cp -p "${KEY_BACKUP}/probe_key" /data/ripe-atlas/etc/
+        cp -p "${KEY_BACKUP}/probe_key.pub" /data/ripe-atlas/etc/
+    fi
+fi
+
+if [ ! -d /data/ripe-atlas/spool ]; then
+    mkdir -p /data/ripe-atlas/spool
+    cp -rp /usr/share/factory/var/spool/ripe-atlas/. /data/ripe-atlas/spool/
+    bashio::log.debug "Copied factory spool defaults to /data/ripe-atlas/spool"
+fi
+
+# Merge new factory files on every startup (no-clobber: won't overwrite
+# existing files like probe keys, but adds new files from package upgrades)
+cp -rpn /usr/share/factory/etc/ripe-atlas/. /data/ripe-atlas/etc/
+cp -rpn /usr/share/factory/var/spool/ripe-atlas/. /data/ripe-atlas/spool/
+
+# Back up probe keys to /config/ (survives uninstall+reinstall)
+if [ -f /data/ripe-atlas/etc/probe_key ] && [ ! -f "${KEY_BACKUP}/probe_key" ]; then
+    bashio::log.info "Backing up probe keys to /config/..."
+    mkdir -p "${KEY_BACKUP}"
+    cp -p /data/ripe-atlas/etc/probe_key "${KEY_BACKUP}/"
+    cp -p /data/ripe-atlas/etc/probe_key.pub "${KEY_BACKUP}/"
+fi
+
+# Symlink to persistent storage
+bashio::log.debug "Creating symlinks..."
+ln -sf /data/ripe-atlas/etc /etc/ripe-atlas
+bashio::log.debug "ln /etc/ripe-atlas -> $(readlink -f /etc/ripe-atlas 2>&1)"
+ln -sf /data/ripe-atlas/spool /var/spool/ripe-atlas
+bashio::log.debug "ln /var/spool/ripe-atlas -> $(readlink -f /var/spool/ripe-atlas 2>&1)"
+
+# Ensure runtime directory exists
+mkdir -p /run/ripe-atlas
+# Use numeric UIDs (102:999) as fallback in case names still can't resolve
+chown 102:999 /run/ripe-atlas
+chmod 775 /run/ripe-atlas
+
+# Fix ownership (101=ripe-atlas, 999=ripe-atlas group)
+chown -R 101:999 /data/ripe-atlas/etc
+chmod 755 /data/ripe-atlas/etc
+chown -R 101:999 /data/ripe-atlas/spool
+chmod 2775 /data/ripe-atlas/spool
+
+# ---- Write probe configuration ----
+cat > /etc/ripe-atlas/config.txt <<CONF
+CHECK_ATLASDATA_TMPFS=no
+CONF
+
+if [ ! -f /etc/ripe-atlas/mode.atlasswprobe ]; then
+    echo "prod" > /etc/ripe-atlas/mode.atlasswprobe
+fi
+
+# ---- Sync probe key to add-on configuration UI ----
+if [ -f /etc/ripe-atlas/probe_key.pub ]; then
+    PROBE_KEY=$(tr -d '\n' < /etc/ripe-atlas/probe_key.pub)
+    STORED_KEY=$(bashio::config 'probe_key' 2>/dev/null) || STORED_KEY=""
+    if [ "${STORED_KEY}" != "${PROBE_KEY}" ]; then
+        bashio::log.info "Syncing probe key to add-on configuration..."
+        CURRENT_OPTS=$(curl -s \
+            -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+            "http://supervisor/addons/self/info" | jq '.data.options') || CURRENT_OPTS='{}'
+        UPDATED_OPTS=$(echo "${CURRENT_OPTS}" | \
+            jq --arg pk "${PROBE_KEY}" '. + {probe_key: $pk}')
+        curl -s -X POST \
+            -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"options\": ${UPDATED_OPTS}}" \
+            "http://supervisor/addons/self/options" > /dev/null || true
+    fi
+fi
+
+# ---- Registration info ----
+if [ ! -f /etc/ripe-atlas/probe_key.pub ]; then
+    bashio::log.info "========================================"
+    bashio::log.info "  FIRST RUN: Probe keys will be generated."
+    bashio::log.info "  After startup, check the log for your"
+    bashio::log.info "  public key and registration link."
+    bashio::log.info "========================================"
+
+    # Wait for probe to generate keys, then back up and sync to UI
+    (
+        ATTEMPTS=0
+        while [ ! -f /etc/ripe-atlas/probe_key.pub ] && [ "${ATTEMPTS}" -lt 60 ]; do
+            sleep 5
+            ATTEMPTS=$((ATTEMPTS + 1))
+        done
+        [ -f /etc/ripe-atlas/probe_key.pub ] || exit 0
+
+        bashio::log.info "========================================"
+        bashio::log.info "  Your probe public key:"
+        bashio::log.info "$(cat /etc/ripe-atlas/probe_key.pub)"
+        bashio::log.info ""
+        bashio::log.info "  Register at: https://atlas.ripe.net/apply/swprobe/"
+        bashio::log.info "========================================"
+
+        # Back up keys to /config/
+        if [ ! -f "${KEY_BACKUP}/probe_key" ]; then
+            bashio::log.info "Backing up probe keys to /config/..."
+            mkdir -p "${KEY_BACKUP}"
+            cp -p /etc/ripe-atlas/probe_key "${KEY_BACKUP}/"
+            cp -p /etc/ripe-atlas/probe_key.pub "${KEY_BACKUP}/"
+        fi
+
+        # Sync to add-on configuration UI
+        PROBE_KEY=$(tr -d '\n' < /etc/ripe-atlas/probe_key.pub)
+        CURRENT_OPTS=$(curl -s \
+            -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+            "http://supervisor/addons/self/info" | jq '.data.options') || CURRENT_OPTS='{}'
+        UPDATED_OPTS=$(echo "${CURRENT_OPTS}" | \
+            jq --arg pk "${PROBE_KEY}" '. + {probe_key: $pk}')
+        curl -s -X POST \
+            -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"options\": ${UPDATED_OPTS}}" \
+            "http://supervisor/addons/self/options" > /dev/null || true
+    ) &
+else
+    bashio::log.info "========================================"
+    bashio::log.info "  Your probe public key:"
+    bashio::log.info "$(cat /etc/ripe-atlas/probe_key.pub)"
+    bashio::log.info ""
+    bashio::log.info "  Register at: https://atlas.ripe.net/apply/swprobe/"
+    bashio::log.info "========================================"
+fi
+
+# ---- Pre-launch diagnostics ----
+bashio::log.debug "Contents of /etc/ripe-atlas: $(ls -la /etc/ripe-atlas/ 2>&1)"
+bashio::log.debug "Probe key exists: $(test -f /etc/ripe-atlas/probe_key && echo 'yes' || echo 'no')"
+bashio::log.debug "known_hosts.reg format check: $(head -1 /usr/share/ripe-atlas/known_hosts.reg 2>&1)"
+
+# ---- Start the probe ----
+bashio::log.info "Launching RIPE Atlas probe..."
+exec ripe-atlas

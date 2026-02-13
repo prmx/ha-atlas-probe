@@ -1,0 +1,8 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+
+bashio::log.info "RIPE Atlas Probe stopped (exit code: ${1})"
+# With symlinks, all writes go directly to /data/ — nothing to copy back.
+bashio::log.debug "Symlink state: /etc/ripe-atlas -> $(readlink /etc/ripe-atlas 2>&1 || echo 'NOT A SYMLINK')"
+bashio::log.debug "Symlink state: /var/spool/ripe-atlas -> $(readlink /var/spool/ripe-atlas 2>&1 || echo 'NOT A SYMLINK')"
+bashio::log.debug "Persistent data: $(ls /data/ripe-atlas/etc/ 2>&1 | head -5)"

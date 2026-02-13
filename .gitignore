@@ -1,0 +1,23 @@
+# Development files
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+*.pyc
+__pycache__/
+.pytest_cache/
+
+# IDE files
+.vscode/
+.idea/
+*.iml
+
+# Temporary files
+/tmp/
+*.tmp
+*.log
+
+# Docker build cache
+.docker/

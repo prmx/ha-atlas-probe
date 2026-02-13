@@ -1,0 +1,4 @@
+configuration:
+  log_level:
+    name: Log Level
+    description: Set the logging level for the add-on

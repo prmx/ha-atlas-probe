@@ -1,0 +1,87 @@
+#include <tunables/global>
+
+profile ripe_atlas_probe flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # Capabilities
+  capability net_admin,
+  capability net_raw,
+  capability setgid,
+  capability setuid,
+  capability chown,
+  capability fowner,
+  capability dac_override,
+
+  # S6-Overlay
+  /init rix,
+  /bin/** rix,
+  /usr/bin/** rix,
+  /run/{s6,s6-rc*,service}/** rix,
+  /package/** rix,
+  /command/** rix,
+  /etc/s6-overlay/** r,
+  /etc/services.d/** rwix,
+  /etc/cont-init.d/** rwix,
+  /etc/cont-finish.d/** rwix,
+  /run/{,**} rwk,
+  /dev/tty rw,
+
+  # Bashio
+  /usr/lib/bashio/** rix,
+  /tmp/** rw,
+
+  # User/group management (probe users may need runtime creation)
+  /etc/passwd rw,
+  /etc/group rw,
+
+  # HA data
+  /data/** rw,
+
+  # HA config directory — probe key backup (survives uninstall+reinstall)
+  # NOTE: /config/ rw is required for mkdir but grants broader directory
+  # write than ideal. The add-on only needs /config/.ripe-atlas/.
+  /config/ rw,
+  /config/.ripe-atlas/ rw,
+  /config/.ripe-atlas/** rw,
+
+  # RIPE Atlas probe binaries and scripts
+  /usr/libexec/ripe-atlas/** rix,
+  /usr/bin/ripe-atlas rix,
+  /usr/sbin/** rix,
+
+  # RIPE Atlas probe data
+  /usr/share/ripe-atlas/** r,
+  /usr/share/factory/** r,
+  /etc/ripe-atlas rw,
+  /etc/ripe-atlas/** rw,
+  /var/spool/ripe-atlas rw,
+  /var/spool/ripe-atlas/** rw,
+  /run/ripe-atlas/** rw,
+
+  # Network
+  network inet dgram,
+  network inet stream,
+  network inet6 dgram,
+  network inet6 stream,
+  network raw,
+  network netlink raw,
+
+  # SSH client (needed for probe registration and controller connection)
+  /etc/ssh/** r,
+
+  # OS identification (customized for RIPE NCC telemetry)
+  /etc/os-release r,
+
+  # DNS and hostname resolution
+  /etc/resolv.conf r,
+  /etc/hosts r,
+  /etc/nsswitch.conf r,
+
+  # SSL certificates
+  /etc/ssl/certs/** r,
+  /usr/share/ca-certificates/** r,
+
+  # Proc and sys (needed for network measurements)
+  @{PROC}/** r,
+  /sys/** r,
+}

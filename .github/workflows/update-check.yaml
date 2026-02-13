@@ -1,0 +1,141 @@
+name: Check for probe updates
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Every Monday 06:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      branch: ${{ steps.create.outputs.branch }}
+      created: ${{ steps.create.outputs.created }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check upstream probe version
+        id: check
+        run: |
+          CURRENT=$(grep 'PROBE_VERSION=' Dockerfile | head -1 | sed 's/.*=//')
+          LATEST=$(gh api repos/RIPE-NCC/ripe-atlas-software-probe/releases/latest --jq '.tag_name')
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          if [ "$CURRENT" != "$LATEST" ]; then
+            echo "update=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for existing PR
+        id: existing
+        if: steps.check.outputs.update == 'true'
+        run: |
+          OPEN=$(gh pr list --head "update/probe-${{ steps.check.outputs.latest }}" --state open --json number --jq 'length')
+          if [ "$OPEN" -gt 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update files and create PR
+        id: create
+        if: steps.check.outputs.update == 'true' && steps.existing.outputs.skip != 'true'
+        run: |
+          NEW="${{ steps.check.outputs.latest }}"
+          BRANCH="update/probe-${NEW}"
+          DATE=$(date -u +%Y-%m-%d)
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Bump Dockerfile
+          sed -i "s/PROBE_VERSION=.*/PROBE_VERSION=${NEW}/" Dockerfile
+
+          # Bump config.yaml version to NEW.0
+          sed -i "s/^version: .*/version: \"${NEW}.0\"/" config.yaml
+
+          # Prepend changelog entry after the header line
+          sed -i "/^All notable changes/a\\\\n## [${NEW}.0] - ${DATE}\\n\\n### Changed\\n- Update RIPE Atlas probe to ${NEW}" CHANGELOG.md
+
+          git checkout -b "$BRANCH"
+          git add Dockerfile config.yaml CHANGELOG.md
+          git commit -m "Update RIPE Atlas probe to ${NEW}"
+          git push -u origin "$BRANCH"
+
+          gh pr create \
+            --title "Update probe to ${NEW}" \
+            --body "Automated update: RIPE Atlas probe ${{ steps.check.outputs.current }} → ${NEW}"
+
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-check:
+    needs: update
+    if: needs.update.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            build_from: ghcr.io/home-assistant/amd64-base-debian:bookworm
+          - arch: aarch64
+            build_from: ghcr.io/home-assistant/aarch64-base-debian:bookworm
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.update.outputs.branch }}
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build ${{ matrix.arch }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          build-args: |
+            BUILD_FROM=${{ matrix.build_from }}
+            BUILD_ARCH=${{ matrix.arch }}
+
+  auto-merge:
+    needs: [update, build-check]
+    if: needs.build-check.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Merge PR and trigger release
+        run: |
+          BRANCH="${{ needs.update.outputs.branch }}"
+
+          # Merge the PR
+          gh pr merge "$BRANCH" --squash
+
+          # Get the version from the merged config.yaml
+          git pull origin main
+          VERSION=$(grep '^version:' config.yaml | sed 's/version: *"\(.*\)"/\1/')
+
+          # Trigger build workflow directly (tag pushes from GITHUB_TOKEN
+          # don't trigger other workflows — GitHub Actions limitation)
+          gh workflow run release.yaml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

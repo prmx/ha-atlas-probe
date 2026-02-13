@@ -1,0 +1,6 @@
+---
+ignored:
+  # BUILD_FROM is a build arg; can't tag it explicitly
+  - DL3006
+  # Pinning apt versions breaks on upstream updates
+  - DL3008
