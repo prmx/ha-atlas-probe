@@ -17,8 +17,10 @@ jobs:
         include:
           - arch: amd64
             build_from: ghcr.io/home-assistant/amd64-base-debian:bookworm
+            platform: linux/amd64
           - arch: aarch64
             build_from: ghcr.io/home-assistant/aarch64-base-debian:bookworm
+            platform: linux/arm64
     steps:
       - uses: actions/checkout@v6
         with:
@@ -34,6 +36,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
+          platforms: ${{ matrix.platform }}
           push: false
           build-args: |
             BUILD_FROM=${{ matrix.build_from }}
