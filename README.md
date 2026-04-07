@@ -16,14 +16,16 @@ RIPE Atlas is a global network of probes that measure Internet connectivity and 
 - Help monitor Internet health worldwide
 - Gain insights into your network connectivity
 
-## Installation
+## Getting Started
 
-1. Add this repository to your Home Assistant add-on store:
+1. **Create a RIPE NCC account** at [access.ripe.net](https://access.ripe.net) if you don't have one.
+2. **Install the add-on** from the Home Assistant add-on store:
    - Navigate to **Settings** → **Add-ons** → **Add-on Store** → **⋮** (menu) → **Repositories**
    - Add the repository URL: `https://github.com/prmx/ha-atlas-probe`
-2. Find "RIPE Atlas Probe" in the add-on store and click **Install**
-3. Start the add-on and check the logs
-4. Follow the registration instructions in the logs to activate your probe
+   - Find "RIPE Atlas Probe" and click **Install**
+3. **Start the add-on** — it will automatically generate your probe's SSH key pair on first boot.
+4. **Get your public key** — the probe generates its SSH key pair on first boot. Once ready, the key appears in the logs and is synced automatically to the `probe_key` field in the **Configuration** tab.
+5. **Register your probe** by pasting the public key into the form at [atlas.ripe.net/apply/swprobe](https://atlas.ripe.net/apply/swprobe/). Your probe will connect automatically and appear on your [RIPE Atlas dashboard](https://atlas.ripe.net/probes/) shortly after.
 
 ## Configuration
 

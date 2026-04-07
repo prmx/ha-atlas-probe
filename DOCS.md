@@ -33,11 +33,10 @@ The probe's SSH public key, used for registration with RIPE NCC. This field is a
 
 After starting the add-on for the first time:
 
-1. Check the add-on logs to verify the probe is running
-2. Find the probe's public key at `/data/ripe-atlas/etc/probe_key.pub`
-3. Go to https://atlas.ripe.net/apply/swprobe/
-4. Register your probe using the public key
-5. Wait for manual approval from RIPE NCC (usually takes a few days)
+1. The probe generates its SSH key pair on first boot — watch the logs until the key appears.
+2. Copy the public key from the `probe_key` field in the **Configuration** tab (auto-populated once ready), from the logs, or from `/config/.ripe-atlas/probe_key.pub`.
+3. Paste the key into the registration form at https://atlas.ripe.net/apply/swprobe/
+4. Your probe will connect automatically shortly after registration and appear on your RIPE Atlas dashboard.
 
 ## How to View Probe Status
 
