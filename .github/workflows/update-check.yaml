@@ -19,7 +19,7 @@ jobs:
       branch: ${{ steps.create.outputs.branch }}
       created: ${{ steps.create.outputs.created }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Check upstream probe version
         id: check
@@ -94,7 +94,7 @@ jobs:
             build_from: ghcr.io/home-assistant/aarch64-base-debian:bookworm
             platform: linux/arm64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.update.outputs.branch }}
           persist-credentials: false
@@ -124,7 +124,7 @@ jobs:
       pull-requests: write
       actions: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Merge PR and trigger release
         run: |
