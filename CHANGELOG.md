@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5130.0] - 2026-08-24
+
+### Changed
+- Update RIPE Atlas probe to 5130
+
 ## [5120.0] - 2026-03-13
 
 ### Added

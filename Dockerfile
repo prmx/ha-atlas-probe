@@ -1,7 +1,7 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
-ARG PROBE_VERSION=5120
+ARG PROBE_VERSION=5130
 ARG BUILD_ARCH
 
 # Create users/groups matching upstream expectations
