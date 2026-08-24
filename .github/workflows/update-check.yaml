@@ -131,13 +131,15 @@ jobs:
             "Merging and releasing are manual — upstream probe changes need a live probe to verify.")
 
           if [ -n "$OPEN_PR" ]; then
-            gh pr edit "$OPEN_PR" --title "Update probe to ${NEW}" --body "$BODY"
+            gh pr edit "$OPEN_PR" --title "Update probe to ${NEW}" --body "$BODY" \
+              --add-assignee "${{ github.repository_owner }}"
             echo "Updated PR #${OPEN_PR} to probe ${NEW}"
             PR="$OPEN_PR"
           else
             PR_URL=$(gh pr create \
               --head "${BRANCH}" \
               --base main \
+              --assignee "${{ github.repository_owner }}" \
               --title "Update probe to ${NEW}" \
               --body "$BODY")
             PR="${PR_URL##*/}"

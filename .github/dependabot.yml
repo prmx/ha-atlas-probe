@@ -4,6 +4,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    assignees:
+      - prmx
     ignore:
       # The monolithic home-assistant/builder action is deprecated and its
       # builder images stopped being published after 2026.03.2 — action
