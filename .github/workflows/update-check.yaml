@@ -69,6 +69,18 @@ jobs:
             --json number,isCrossRepository \
             --jq '[.[] | select(.isCrossRepository == false)] | .[0].number // empty')
 
+          # Closing the PR is how a maintainer declines a version — don't reopen it.
+          if [ -z "$OPEN_PR" ]; then
+            DECLINED=$(gh pr list --head "${BRANCH}" --state closed \
+              --json number,state,title,isCrossRepository \
+              --jq "[.[] | select(.state == \"CLOSED\" and .isCrossRepository == false)
+                    | select(.title == \"Update probe to ${NEW}\")] | .[0].number // empty")
+            if [ -n "$DECLINED" ]; then
+              echo "::notice::PR #${DECLINED} for probe ${NEW} was closed manually — not recreating it."
+              exit 0
+            fi
+          fi
+
           if git rev-parse -q --verify "refs/remotes/origin/${BRANCH}" >/dev/null; then
             AUTHOR=$(git log -1 --format='%an' "origin/${BRANCH}")
 
@@ -114,7 +126,9 @@ jobs:
             "" \
             "Upstream release: https://github.com/RIPE-NCC/ripe-atlas-software-probe/releases/tag/${NEW}" \
             "" \
-            "This PR is maintained automatically. While it is open, each weekly run rebuilds the branch on top of \`main\` and bumps it in place if a newer probe version appears.")
+            "This PR is maintained automatically: while it is open, each weekly run rebuilds the branch on top of \`main\` and bumps it in place if a newer probe version appears." \
+            "" \
+            "Merging and releasing are manual — upstream probe changes need a live probe to verify.")
 
           if [ -n "$OPEN_PR" ]; then
             gh pr edit "$OPEN_PR" --title "Update probe to ${NEW}" --body "$BODY"
@@ -198,27 +212,3 @@ jobs:
             BUILD_ARCH=${{ matrix.arch }}
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,scope=${{ matrix.arch }},mode=max
-
-  # No `if:` — the default already requires every job in `needs` to succeed.
-  auto-merge:
-    needs: [update, build-check]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-      actions: write
-    steps:
-      # Checked out only so `gh` can resolve the repo from the git remote.
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Merge PR and trigger release
-        run: |
-          gh pr merge "${{ needs.update.outputs.pr }}" --squash --delete-branch
-
-          # Trigger the release workflow directly — tag pushes made with
-          # GITHUB_TOKEN don't trigger other workflows (Actions limitation).
-          gh workflow run release.yaml
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
