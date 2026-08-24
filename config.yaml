@@ -17,6 +17,12 @@ map:
   - config:rw
 options:
   log_level: info
+  telnetd_port: 2023
+  http_post_port: 8080
+  rxtxrpt: false
 schema:
   log_level: list(debug|info|warning|error)
   probe_key: str?
+  telnetd_port: port
+  http_post_port: port
+  rxtxrpt: bool

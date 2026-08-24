@@ -15,6 +15,9 @@ This add-on allows you to run a RIPE Atlas software probe on your Home Assistant
 
 ```yaml
 log_level: info
+telnetd_port: 2023
+http_post_port: 8080
+rxtxrpt: false
 ```
 
 ### Option: `log_level`
@@ -28,6 +31,25 @@ The log level for the add-on. Available options are:
 ### Option: `probe_key` (auto-populated)
 
 The probe's SSH public key, used for registration with RIPE NCC. This field is automatically populated after the probe generates its keys. You can copy it directly from the Configuration tab instead of searching through the logs.
+
+### Option: `telnetd_port`
+
+TCP port used for telnetd (default `2023`).
+
+### Option: `http_post_port`
+
+TCP port used for httppost (default `8080`).
+
+The probe uses ports 2023 and 8080 internally and will not function correctly if
+another service is already using them. The add-on runs on the host network, so
+that includes anything else listening on your Home Assistant host. See
+[TCP ports conflict](https://github.com/RIPE-NCC/ripe-atlas-software-probe#tcp-ports-conflict)
+in the upstream documentation.
+
+### Option: `rxtxrpt`
+
+Send interface traffic statistics as Atlas measurement results (default
+`false`).
 
 ## First Time Setup
 

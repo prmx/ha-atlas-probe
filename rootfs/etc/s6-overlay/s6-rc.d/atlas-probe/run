@@ -97,8 +97,14 @@ chmod 2775 /data/ripe-atlas/spool
 rm -f /etc/ripe-atlas/reg_servers.sh
 
 # ---- Write probe configuration ----
+# The probe tests RXTXRPT against the literal string "yes", not true/false.
+if bashio::config.true 'rxtxrpt'; then RXTXRPT=yes; else RXTXRPT=no; fi
+
 cat > /etc/ripe-atlas/config.txt <<CONF
 CHECK_ATLASDATA_TMPFS=no
+TELNETD_PORT=$(bashio::config 'telnetd_port')
+HTTP_POST_PORT=$(bashio::config 'http_post_port')
+RXTXRPT=${RXTXRPT}
 CONF
 
 if [ ! -f /etc/ripe-atlas/mode.atlasswprobe ]; then

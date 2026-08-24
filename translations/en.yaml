@@ -2,3 +2,20 @@ configuration:
   log_level:
     name: Log Level
     description: Set the logging level for the add-on
+  probe_key:
+    name: Probe Public Key
+    description: >-
+      Filled in automatically once the probe generates its keys. Copy this into
+      the registration form at https://atlas.ripe.net/apply/swprobe/
+  telnetd_port:
+    name: Telnetd Port
+    description: >-
+      TCP port used for telnetd. Change it if 2023 is already in use on the host.
+  http_post_port:
+    name: HTTP Post Port
+    description: >-
+      TCP port used for httppost. Change it if 8080 is already in use on the host.
+  rxtxrpt:
+    name: Interface Traffic Statistics
+    description: >-
+      Send interface traffic statistics as Atlas measurement results.
