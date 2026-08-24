@@ -93,6 +93,9 @@ chmod 755 /data/ripe-atlas/etc
 chown -R 101:999 /data/ripe-atlas/spool
 chmod 2775 /data/ripe-atlas/spool
 
+# Written once by the probe, never refreshed; a stale list breaks registration.
+rm -f /etc/ripe-atlas/reg_servers.sh
+
 # ---- Write probe configuration ----
 cat > /etc/ripe-atlas/config.txt <<CONF
 CHECK_ATLASDATA_TMPFS=no
