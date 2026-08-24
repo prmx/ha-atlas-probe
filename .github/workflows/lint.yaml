@@ -49,4 +49,4 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: frenck/action-addon-linter@v2.21.0
+      - uses: frenck/action-addon-linter@v2.21.1
