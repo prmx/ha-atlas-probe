@@ -49,13 +49,9 @@ See [DOCS.md](DOCS.md) for detailed configuration options and setup instructions
 
 ## Technical Notes
 
-### SSH compatibility fixes
+### SSH known_hosts fix
 
-Running the RIPE Atlas probe in a container with OpenSSH 9.2+ (Debian bookworm) requires several fixes that the upstream packages don't handle:
-
-- **`known_hosts.reg` port format** — The probe connects to registration servers on port 443, but the shipped `known_hosts.reg` uses bare hostnames (`193.0.19.246 ssh-rsa ...`). OpenSSH looks up `[193.0.19.246]:443` for non-standard ports and finds no match, causing host key verification failure. We append `[host]:443` formatted entries at build time.
-
-- **`ssh-rsa` algorithm disabled** — OpenSSH 8.8+ disabled `ssh-rsa` (SHA-1) by default, but RIPE Atlas registration servers still use `ssh-rsa` host keys. We re-enable it via `/etc/ssh/ssh_config.d/ripe-atlas.conf`.
+The probe connects to registration servers on port 443, but the shipped `known_hosts.reg` uses bare hostnames (`193.0.19.75 ssh-ed25519 ...`). OpenSSH looks up `[193.0.19.75]:443` for non-standard ports and finds no match, causing host key verification failure, so we append `[host]:443` formatted entries at build time.
 
 ## Support
 

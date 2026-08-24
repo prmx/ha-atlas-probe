@@ -42,8 +42,8 @@ RUN rm -f /usr/bin/systemd-sysusers /usr/bin/systemctl
 
 # Fix known_hosts.reg: SSH requires [host]:port format for non-standard ports.
 # The probe connects to registration servers on port 443 but the package ships
-# bare hostnames (e.g. "193.0.19.246 ssh-rsa ..."). SSH looks up host keys as
-# "[193.0.19.246]:443" and fails to match. Add [host]:443 entries.
+# bare hostnames (e.g. "193.0.19.75 ssh-ed25519 ..."). SSH looks up host keys
+# as "[193.0.19.75]:443" and fails to match. Add [host]:443 entries.
 RUN cp /usr/share/ripe-atlas/known_hosts.reg /tmp/known_hosts.reg \
     && sed 's/^\([^ ]*\) /[\1]:443 /' /tmp/known_hosts.reg \
         >> /usr/share/ripe-atlas/known_hosts.reg \
