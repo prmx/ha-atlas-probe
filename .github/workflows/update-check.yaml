@@ -7,7 +7,12 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}
-  cancel-in-progress: true
+  # This workflow merges to main and triggers the release: cancelling it
+  # midway can leave a merged bump with no tag and no release.
+  cancel-in-progress: false
+
+env:
+  BRANCH: update/probe
 
 jobs:
   update:
@@ -16,72 +21,149 @@ jobs:
       contents: write
       pull-requests: write
     outputs:
-      branch: ${{ steps.create.outputs.branch }}
-      created: ${{ steps.create.outputs.created }}
+      branch: ${{ steps.sync.outputs.branch }}
+      pr: ${{ steps.sync.outputs.pr }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # need origin/main and origin/$BRANCH ancestry
 
-      - name: Check upstream probe version
+      - name: Resolve current and upstream versions
         id: check
         run: |
           CURRENT=$(grep 'PROBE_VERSION=' Dockerfile | head -1 | sed 's/.*=//')
           LATEST=$(gh api repos/RIPE-NCC/ripe-atlas-software-probe/releases/latest --jq '.tag_name')
+
+          # Both must be plain integers. A renamed or prerelease upstream tag
+          # must never reach the .deb URL or config.yaml — fail loudly instead.
+          case "$CURRENT" in ''|*[!0-9]*)
+            echo "::error::Unparsable PROBE_VERSION in Dockerfile: '$CURRENT'"; exit 1 ;;
+          esac
+          case "$LATEST" in ''|*[!0-9]*)
+            echo "::error::Unexpected upstream tag format: '$LATEST'"; exit 1 ;;
+          esac
+
+          echo "Current: ${CURRENT} — upstream latest: ${LATEST}"
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
           echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
-          if [ "$CURRENT" != "$LATEST" ]; then
+
+          if [ "$LATEST" -gt "$CURRENT" ]; then
             echo "update=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "update=false" >> "$GITHUB_OUTPUT"
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check for existing PR
-        id: existing
+      - name: Sync update branch and PR
+        id: sync
         if: steps.check.outputs.update == 'true'
         run: |
-          OPEN=$(gh pr list --head "update/probe-${{ steps.check.outputs.latest }}" --state open --json number --jq 'length')
-          if [ "$OPEN" -gt 0 ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Update files and create PR
-        id: create
-        if: steps.check.outputs.update == 'true' && steps.existing.outputs.skip != 'true'
-        run: |
           NEW="${{ steps.check.outputs.latest }}"
-          BRANCH="update/probe-${NEW}"
-          DATE=$(date -u +%Y-%m-%d)
+          OLD="${{ steps.check.outputs.current }}"
+          MAIN=$(git rev-parse origin/main)
+
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+
+          OPEN_PR=$(gh pr list --head "${BRANCH}" --state open \
+            --json number,isCrossRepository \
+            --jq '[.[] | select(.isCrossRepository == false)] | .[0].number // empty')
+
+          if git rev-parse -q --verify "refs/remotes/origin/${BRANCH}" >/dev/null; then
+            AUTHOR=$(git log -1 --format='%an' "origin/${BRANCH}")
+
+            # Never touch a branch someone else has committed to — rebuilding
+            # it from main would force-push their work away.
+            if [ "$AUTHOR" != "github-actions[bot]" ]; then
+              echo "::warning::${BRANCH} carries manual commits by ${AUTHOR} — leaving it untouched."
+              exit 0
+            fi
+
+            # Already prepared for this version, already rebased on the current
+            # main tip, and touching nothing unexpected? Leave the PR alone.
+            ON_BRANCH=$(git show "origin/${BRANCH}:Dockerfile" | grep 'PROBE_VERSION=' | head -1 | sed 's/.*=//')
+            PARENT=$(git rev-parse -q --verify "origin/${BRANCH}^^{commit}" || echo none)
+            CHANGED=$(git diff --name-only "$MAIN" "origin/${BRANCH}" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
+            if [ "$ON_BRANCH" = "$NEW" ] \
+              && [ "$PARENT" = "$MAIN" ] \
+              && [ "$CHANGED" = "CHANGELOG.md Dockerfile config.yaml" ] \
+              && [ -n "$OPEN_PR" ]; then
+              echo "PR #${OPEN_PR} already tracks probe ${NEW} on top of main — nothing to rebuild."
+              echo "pr=$OPEN_PR" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Bump Dockerfile
+          # Always rebuild from main: one commit, no stacking, stays mergeable.
+          git checkout -B "${BRANCH}" "$MAIN"
+
+          DATE=$(date -u +%Y-%m-%d)
           sed -i "s/PROBE_VERSION=.*/PROBE_VERSION=${NEW}/" Dockerfile
-
-          # Bump config.yaml version to NEW.0
           sed -i "s/^version: .*/version: \"${NEW}.0\"/" config.yaml
-
-          # Prepend changelog entry after the header line
           sed -i "/^All notable changes/a\\\\n## [${NEW}.0] - ${DATE}\\n\\n### Changed\\n- Update RIPE Atlas probe to ${NEW}" CHANGELOG.md
 
-          git checkout -b "$BRANCH"
           git add Dockerfile config.yaml CHANGELOG.md
           git commit -m "Update RIPE Atlas probe to ${NEW}"
-          git push -u origin "$BRANCH"
+          git push --force-with-lease origin "${BRANCH}"
 
-          gh pr create \
-            --title "Update probe to ${NEW}" \
-            --body "Automated update: RIPE Atlas probe ${{ steps.check.outputs.current }} → ${NEW}"
+          BODY=$(printf '%s\n' \
+            "Automated update: RIPE Atlas probe \`${OLD}\` → \`${NEW}\`." \
+            "" \
+            "Upstream release: https://github.com/RIPE-NCC/ripe-atlas-software-probe/releases/tag/${NEW}" \
+            "" \
+            "This PR is maintained automatically. While it is open, each weekly run rebuilds the branch on top of \`main\` and bumps it in place if a newer probe version appears.")
 
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-          echo "created=true" >> "$GITHUB_OUTPUT"
+          if [ -n "$OPEN_PR" ]; then
+            gh pr edit "$OPEN_PR" --title "Update probe to ${NEW}" --body "$BODY"
+            echo "Updated PR #${OPEN_PR} to probe ${NEW}"
+            PR="$OPEN_PR"
+          else
+            PR_URL=$(gh pr create \
+              --head "${BRANCH}" \
+              --base main \
+              --title "Update probe to ${NEW}" \
+              --body "$BODY")
+            PR="${PR_URL##*/}"
+            echo "Created PR #${PR}"
+          fi
+
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Retire update branch
+        if: steps.check.outputs.update != 'true'
+        run: |
+          if git rev-parse -q --verify "refs/remotes/origin/${BRANCH}" >/dev/null; then
+            AUTHOR=$(git log -1 --format='%an' "origin/${BRANCH}")
+            if [ "$AUTHOR" != "github-actions[bot]" ]; then
+              echo "::warning::${BRANCH} carries manual commits by ${AUTHOR} — leaving it untouched."
+              exit 0
+            fi
+          fi
+
+          PR=$(gh pr list --head "${BRANCH}" --state open \
+            --json number,isCrossRepository \
+            --jq '[.[] | select(.isCrossRepository == false)] | .[0].number // empty')
+
+          if [ -n "$PR" ]; then
+            gh pr close "$PR" --delete-branch \
+              --comment "No longer needed — \`main\` is already on probe ${{ steps.check.outputs.current }}."
+          elif git rev-parse -q --verify "refs/remotes/origin/${BRANCH}" >/dev/null; then
+            echo "Deleting stale ${BRANCH} (no open PR, main already up to date)."
+            git push origin --delete "${BRANCH}"
+          else
+            echo "Up to date on probe ${{ steps.check.outputs.current }}."
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-check:
     needs: update
-    if: needs.update.outputs.created == 'true'
+    if: success() && needs.update.outputs.pr != ''
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -114,31 +196,29 @@ jobs:
           build-args: |
             BUILD_FROM=${{ matrix.build_from }}
             BUILD_ARCH=${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.arch }},mode=max
 
+  # No `if:` — the default already requires every job in `needs` to succeed.
   auto-merge:
     needs: [update, build-check]
-    if: needs.build-check.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
       actions: write
     steps:
+      # Checked out only so `gh` can resolve the repo from the git remote.
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Merge PR and trigger release
         run: |
-          BRANCH="${{ needs.update.outputs.branch }}"
+          gh pr merge "${{ needs.update.outputs.pr }}" --squash --delete-branch
 
-          # Merge the PR
-          gh pr merge "$BRANCH" --squash
-
-          # Get the version from the merged config.yaml
-          git pull origin main
-          VERSION=$(grep '^version:' config.yaml | sed 's/version: *"\(.*\)"/\1/')
-
-          # Trigger build workflow directly (tag pushes from GITHUB_TOKEN
-          # don't trigger other workflows — GitHub Actions limitation)
+          # Trigger the release workflow directly — tag pushes made with
+          # GITHUB_TOKEN don't trigger other workflows (Actions limitation).
           gh workflow run release.yaml
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
