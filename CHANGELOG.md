@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5130.1] - 2026-08-24
+
+### Changed
+- Refresh reg_servers.sh on start to fix probe registration after the 5130 upgrade
+
 ## [5130.0] - 2026-08-24
 
 ### Changed

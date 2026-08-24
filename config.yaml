@@ -1,5 +1,5 @@
 name: "RIPE Atlas Probe"
-version: "5130.0"
+version: "5130.1"
 slug: ripe_atlas_probe
 description: "Run a RIPE Atlas software probe on your Home Assistant system"
 url: "https://github.com/prmx/ha-atlas-probe"
