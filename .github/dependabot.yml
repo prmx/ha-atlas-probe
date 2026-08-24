@@ -4,3 +4,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # The monolithic home-assistant/builder action is deprecated and its
+      # builder images stopped being published after 2026.03.2 — action
+      # releases no longer imply a usable ghcr.io/home-assistant/*-builder
+      # image, so bumping it breaks releases (see the failed v5130.0 build).
+      # Unpin only together with a migration to builder/actions/build-image.
+      - dependency-name: home-assistant/builder
