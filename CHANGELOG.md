@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5130.2] - 2026-08-25
+
+### Changed
+- Make probe runtime options configurable: telnetd port, HTTP post port and interface traffic statistics
+
 ## [5130.1] - 2026-08-24
 
 ### Changed
